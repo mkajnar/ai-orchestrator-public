@@ -57,5 +57,5 @@ Dvě čísla nesedí → NEPOKRAČUJ, zjisti které lže.
 Topic z config.sh, jen ANOMALY a eskalace. DEGRADED tiše.
 
 ---
-Delší znění s odůvodněními: `docs/AGENT-LOOP-full.md`. Čti jen když ti tenhle
-soubor na rozhodnutí nestačí — stojí 3× tolik tokenů.
+Odůvodnění k jednotlivým pravidlům jsou v `ORCHESTRATOR.md`. Načítej je cíleně
+(`./rules 3 8 14`), ne celý dokument.
