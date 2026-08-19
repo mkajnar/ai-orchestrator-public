@@ -1,6 +1,6 @@
 # ORCHESTRATOR — operační kontrakt autonomního agenta
 
-Šablona pro jakýkoli provoz s měřitelným výsledkem: e-shop, SaaS, ETL pipeline,
+Šablona pro jakýkoli provoz s měřitelným výsledkem: sběr dat, e-shop, SaaS, ETL,
 CI/CD, mikroslužby, IoT flotila, dávkové zpracování.
 
 Doménová specifika patří do míst označených **TODO**. Zbytek je obecný a každé

@@ -1,203 +1,342 @@
-# EXAMPLES — jak to nasadit na svůj provoz
+# EXAMPLES — jeden příběh od průzkumu webu po evidenci v DB
 
-Čtyři různé domény, čtyři různé odpovědi na tutéž otázku: **co je výsledek,
-na kterém záleží, a jak ho změřím levně.**
+Zadání, na kterém se dá všechno ukázat naráz, protože ho každý zná:
 
-Každý příklad ukazuje minimum, které stačí k rozjetí: metriku, `fetch()`,
-mantinely a to, co si v dané doméně snadno spletete za poruchu.
+> **Sbíráme inzeráty ze tří typů zdrojů — z aukčního portálu, z inzertních
+> bazarů a z e-shopů — a vedeme je v databázi. Chceme vědět, kolik úplných
+> záznamů denně přibude a kdy se to zlomí.**
 
----
+Tři zdroje záměrně: každý se chová jinak, každý se rozbíjí jinak a každý
+vyžaduje jinou odpověď na otázku, kterou musíte zodpovědět dřív než cokoli
+naprogramujete — **co je tady vlastně výsledek**.
 
-## 1. E-shop
+Postup je vždycky stejný a jde v tomhle pořadí:
 
-**Výsledek:** zaplacená objednávka. Ne návštěvnost, ne přidání do košíku.
-
-```python
-# checks/outcome.py
-SUBJECTS = ["checkout", "platba", "sklad"]
-VALUE_PER_ITEM = 0.0          # průměrná marže na objednávku, když ji znáš
-BLOCK_HOURS = 1               # e-shop reaguje rychle, hodina stačí
-
-def fetch(subject, start, end):
-    if subject == "checkout":
-        rows = db.query("""
-            SELECT status, COUNT(*) FROM objednavky
-            WHERE created_at >= %s AND created_at < %s GROUP BY status
-        """, (start, end))
-        m = dict(rows)
-        return {"ok": m.get("paid", 0),
-                "rejected": m.get("payment_failed", 0),
-                "error": m.get("error", 0)}
-    ...
+```
+   průzkum webu  →  co je výsledek  →  jak ho změřím  →  prahy z vlastních dat
+       část 1            část 2              část 3                část 4
 ```
 
-**Mantinely (§5):**
-
-- objednávky a platby jsou **read-only** — agent nikdy nemění stav objednávky,
-  ani „jen opravu překlepu ve stavu"
-- ceny, slevy a dostupnost jsou eskalace, ne akce
-- e-maily zákazníkům neodesílá agent
-
-**Co si spletete za poruchu:**
-
-| Vypadá jako | Ve skutečnosti |
-|---|---|
-| propad objednávek v noci | denní cyklus — proto medián **stejného bloku denní doby** (§8) |
-| propad v pondělí ráno | týdenní cyklus, u B2B extrémní |
-| nula plateb 20 minut | výpadek platební brány, ne váš kód — pozná se podle §19 |
-| „objednávek je málo" po marketingové akci | vrchol skončil, baseline je zkreslený nahoru |
-
-**Doménová sémantika (§7), kterou musíte napsat:** `pending` je dočasný stav,
-který se sám vyřeší · `payment_failed` se opakuje a část z nich nakonec projde ·
-`cancelled` je terminální · testovací objednávky ze staging IP se nepočítají.
-
 ---
 
-## 2. ETL / datová pipeline
+# 1. Průzkum cílového webu
 
-**Výsledek:** záznam, který doputoval do cílového úložiště validní a úplný.
-Ne „job doběhl".
+Tohle je práce pro agenta, ne pro vás. Zadáte mu doménu a on ji má **doložit
+změřenými odpověďmi**, ne odhadem. Výstup průzkumu je krátký zápis, ze kterého
+se pak píše `fetch()` a mantinely.
 
-```python
-SUBJECTS = ["extract", "transform", "load"]
-BLOCK_HOURS = 4               # dávky chodí po hodinách, kratší okno je šum
+Sedm otázek, které musí zodpovědět, každou příkazem, který jde zopakovat:
 
-def fetch(subject, start, end):
-    r = warehouse.query("""
-        SELECT stage, outcome, COUNT(*) AS n FROM etl_audit
-        WHERE ts >= %s AND ts < %s AND stage = %s
-        GROUP BY stage, outcome
-    """, (start, end, subject))
-    m = {row["outcome"]: row["n"] for row in r}
-    return {"ok": m.get("loaded", 0),
-            "rejected": m.get("schema_mismatch", 0),
-            "error": m.get("failed", 0)}
+### 1.1 Existuje pod HTML datové rozhraní?
+
+Nejlevnější nález průzkumu. Většina moderních výpisů se plní z JSON endpointu,
+který vrací čistá data — a je stabilnější než HTML, protože se u něj nemění
+vzhled.
+
+```bash
+# co si stránka sama tahá na pozadí
+curl -s "$URL" | grep -oE '"[^"]*/(api|graphql|v[0-9])/[^"]*"' | sort -u | head
 ```
 
-Tři subjekty místo jednoho jsou tu záměr: díky nim `triage.sh` rovnou ukáže,
-**ve které vrstvě** se to zlomilo, aniž by se musel volat model (§10).
+Když takový endpoint existuje, zbytek průzkumu se dělá na něm.
+Pokud ne, průzkum pokračuje na HTML.
 
-**Mantinely:**
+### 1.2 Jak vypadá stránkování a kde končí?
 
-- zdrojové systémy jsou read-only, i když do nich technicky zapsat jde
-- schéma cílové tabulky se nemění bez souhlasu — závisí na něm reporty
-- backfill je samostatný change contract, ne vedlejší efekt opravy
+Nejde o „kolik je stránek", ale **jestli výpis nemá strop**. Spousta webů
+odmítne jít za stránku 50 nebo za 1 000 položek a tiše vrátí prázdno.
+To pak vypadá jako vyčerpaný zdroj.
 
-**Co si spletete za poruchu:**
+```bash
+for p in 1 10 50 100 500; do
+  n=$(curl -s "$URL?page=$p" | grep -c "$ITEM_SELECTOR")
+  echo "strana $p → $n položek"
+done
+```
 
-| Vypadá jako | Ve skutečnosti |
-|---|---|
-| nula záznamů v neděli | zdroj dávky o víkendu neposílá |
-| skok o 300 % | backfill, ne růst — a zkreslí baseline na týdny |
-| „všechno failuje" | jeden odstavec se změněným formátem, zbytek běží |
-| pipeline zelená, dat nula | job doběhl s prázdným vstupem a nikdo to nekontroluje |
+Když od nějaké strany chodí nula, máte strop výpisu. Řešením je rozdělit
+dotaz podle kategorie, ceny nebo data — ne zvyšovat číslo strany.
 
-Ten poslední řádek je přesně §2: úspěšný běh není zpracovaná data.
+### 1.3 Co znamená autorizace na tomhle webu?
+
+Čtyři možnosti a každá vyžaduje jinou obsluhu:
+
+| Co web vyžaduje | Jak se pozná | Co si drží agent |
+|---|---|---|
+| nic | detail jde bez cookies | nic |
+| jen cookie ze vstupní stránky | první požadavek nastaví `Set-Cookie` | cookie jar |
+| přihlášení formulářem | detail redirectuje na `/login` | jar + obnovovací postup |
+| token / API klíč | `401` bez hlavičky | tajemství mimo repo (ORCHESTRATOR §23) |
+
+Zjištění je jednoduché — **stejný detail dvakrát, jednou s přihlášením
+a jednou bez**:
+
+```bash
+curl -s -o /dev/null -w "bez přihlášení: %{http_code}\n" "$DETAIL"
+curl -s -o /dev/null -w "s přihlášením: %{http_code}\n" -b cookies.txt "$DETAIL"
+```
+
+Když se liší jen počet polí a ne stavový kód, je to ten nejzrádnější případ:
+bez přihlášení dostanete `200` a **neúplný záznam**. Viz část 2.
+
+### 1.4 Jak poznám, že session vypršela?
+
+Tohle je nejčastější příčina toho, že sběr přes noc tiše umře.
+Přihlášení nevydrží věčně a jeho konec **skoro nikdy nevypadá jako chyba**.
+
+Průzkum musí najít konkrétní signál a zapsat ho:
+
+```python
+def session_zije(resp):
+    if resp.status_code in (401, 403):        return False
+    if "/login" in resp.url:                  return False   # redirect
+    if 'name="password"' in resp.text:        return False   # login form pod 200
+    if not resp.json().get("items"):          return False   # prázdno pod 200
+    return True
+```
+
+Ten třetí a čtvrtý řádek jsou ty důležité. `200` s přihlašovacím formulářem
+v těle je pořád `200` a každá naivní metrika ho spočítá jako úspěch.
+
+### 1.5 Jak vypadá konec života položky?
+
+Bez téhle odpovědi bude agent donekonečna zkoušet položky, které už neexistují,
+a bude to hlásit jako poruchu.
+
+```bash
+# vezmi položku, o které víte, že je pryč, a podívejte se, co web vrátí
+curl -s -o /dev/null -w "%{http_code} → %{redirect_url}\n" "$MRTVA_POLOZKA"
+```
+
+Odpověď bývá jedna z těchhle a **každá znamená něco jiného**:
+
+| Odpověď | Význam | Co s tím |
+|---|---|---|
+| `404` | položka smazána | terminální, odepsat |
+| `410` | položka smazána, web to říká výslovně | terminální, odepsat |
+| `500` u aukcí | aukce skončila | **normální konec života**, ne porucha |
+| `200` + „inzerát byl ukončen" | totéž, jen slušněji | terminální, ale pozná se jen z obsahu |
+| redirect na výpis | položka pryč | terminální |
+| `403` / login | dočasně zamčeno | **nikdy neodepisovat trvale** |
+
+Ten poslední řádek je pravidlo, které stálo nejvíc: dočasný zámek vypadá
+v logu stejně jako smrt. Když ho odepíšete natrvalo, ztratíte položku, která
+se za dva dny vrátí.
+
+### 1.6 Kdy protistrana řekne dost?
+
+Ne kolik požadavků „se sluší" — **co web skutečně odpoví**. Odhad není důkaz
+(ORCHESTRATOR §14).
+
+```bash
+for i in $(seq 1 40); do
+  curl -s -o /dev/null -w "%{http_code} " "$URL"
+done; echo
+```
+
+Zajímají vás `429`, `403`, náhlé `503` a stránka s ověřením místo obsahu.
+Dokud nepřijdou, není co zpomalovat. Až přijdou, řídíte se **tím, co přišlo** —
+`Retry-After` má přednost před jakýmkoli vymyšleným intervalem.
+
+### 1.7 Jaká pole detail vůbec má?
+
+Poslední krok průzkumu, a ten určí, co bude znamenat „úplný záznam":
+
+```bash
+curl -s "$DETAIL" | python3 -c 'import sys,json;print(sorted(json.load(sys.stdin)))'
+```
+
+Rozdělte je na **povinné** (bez nich záznam nemá cenu), **volitelné** a
+**odvozené**. Ta hranice je celé měření — viz hned další sekce.
+
+### Co z průzkumu vypadne
+
+Krátký zápis, který je vstup pro všechno ostatní:
+
+```
+zdroj:          aukce.example.cz
+rozhraní:       JSON /api/v2/items (HTML jen fallback)
+stránkování:    strop 100 stran, dělí se podle kategorie
+autorizace:     login formulářem, session ~4 h
+konec session:  redirect na /login, nebo 200 s name="password"
+konec položky:  500 = skončená aukce (normální), 403 = zamčeno (dočasné)
+rychlost:       429 od ~8 req/s, Retry-After 30
+povinná pole:   id, nazev, cena, kategorie, cas_konce
+```
 
 ---
 
-## 3. CI/CD a build farma
+# 2. Co je výsledek: úplný záznam, ne stažená stránka
 
-**Výsledek:** build, který prošel a je nasaditelný. Ne „pipeline zelená".
+Nejdůležitější rozhodnutí v celé úloze. Nabízí se čtyři metriky a tři z nich
+lžou:
+
+| Metrika | Proč nefunguje |
+|---|---|
+| stažených stránek | stáhnout se dá i chybová hláška |
+| HTTP 200 | přihlašovací stránka je taky 200 |
+| řádků v DB | uloží se i záznam bez ceny a bez názvu |
+| **úplných záznamů v DB** | ← tohle |
+
+„Úplný" definujete vy, podle části 1.7. A hlavně: definujte to **v SQL**, ne
+v hlavě, protože se podle toho bude měřit každý cyklus.
+
+```sql
+-- co považujeme za výsledek
+CREATE VIEW polozky_uplne AS
+SELECT * FROM polozky
+WHERE nazev IS NOT NULL
+  AND cena  IS NOT NULL
+  AND kategorie IS NOT NULL
+  AND jsonb_array_length(fotky) > 0;
+```
+
+Tohle je přímo ORCHESTRATOR §2: *zdraví určují data, ne proces*. Sběr, který
+vesele běží a osm hodin ukládá záznamy bez ceny, je rozbitý — i když v logu
+není jediná chyba.
+
+---
+
+# 3. Jak to změřit: `checks/outcome.py`
 
 ```python
-SUBJECTS = ["build", "test", "deploy"]
+SUBJECTS = ["aukce", "bazary", "obchody"]
 BLOCK_HOURS = 4
-ANOMALY_RATIO = 0.10
-DEGRADED_RATIO = 0.40         # ve firmě s málo commity je rozptyl větší
 
 def fetch(subject, start, end):
-    runs = ci_api.list_runs(stage=subject, since=start, until=end)
-    return {"ok":       sum(1 for r in runs if r.conclusion == "success"),
-            "rejected": sum(1 for r in runs if r.conclusion == "failure"),
-            "error":    sum(1 for r in runs if r.conclusion in ("timed_out", "cancelled"))}
+    row = db.query_one("""
+        SELECT
+          COUNT(*) FILTER (WHERE uplny)                     AS ok,
+          COUNT(*) FILTER (WHERE NOT uplny AND duvod IS NOT NULL) AS rejected,
+          COUNT(*) FILTER (WHERE duvod = 'chyba')           AS error
+        FROM sber_audit
+        WHERE zdroj = %s AND ts >= %s AND ts < %s
+    """, (subject, start, end))
+    return {"ok": row.ok, "rejected": row.rejected, "error": row.error}
 ```
+
+Tři subjekty místo jednoho jsou záměr: `triage.sh` pak rovnou ukáže,
+**který zdroj** se zlomil, aniž by se musel volat model (ORCHESTRATOR §10). Když spadne
+jen aukční portál, není důvod platit tokeny za analýzu bazarů.
+
+Podstatné je, že `fetch()` se ptá **databáze**, ne crawleru. Kdyby se ptal
+procesu, měřili byste znovu proces (ORCHESTRATOR §2).
+
+---
+
+# 4. Prahy, které nesmíte opsat odsud
+
+Postup je v ORCHESTRATOR §8 a je nutné ho projít, protože sběr inzerce má **denní i týdenní
+cyklus** — v noci se inzeruje míň a v neděli večer nejvíc.
+
+```sql
+-- 30 dní zpět, okna po 4 h, poměr k mediánu stejného bloku denní doby
+SELECT blok, percentile_cont(0.05) WITHIN GROUP (ORDER BY pomer) AS p05,
+             percentile_cont(0.10) WITHIN GROUP (ORDER BY pomer) AS p10
+FROM (…) t GROUP BY blok;
+```
+
+Až tohle číslo znáte, je to váš práh. Do té doby žádný práh nemáte —
+a check, který rozhoduje podle vymyšleného čísla, je horší než žádný check.
+
+---
+
+# 5. Tři zdroje, tři různé pasti
+
+## 5.1 Aukční portál — položky mizí a to je v pořádku
+
+Aukce žije pár dní. Pak detail zmizí a **to není porucha**. Kdo si tohle
+nezapíše do ORCHESTRATOR §7 jako doménovou sémantiku, uvidí v logu lavinu chyb a bude
+opravovat něco, co funguje.
 
 **Mantinely:**
 
-- agent nikdy nemění branch protection ani required checks
-- neretryuje cizí buildy — cizí selhání je informace, ne úloha
-- secrets a runner tokeny nečte
-
-**Co si spletete za poruchu:**
+- agent nikdy nepřihazuje, nekupuje ani nezasahuje do účtu
+- přihlašovací údaje jsou mimo repozitář (ORCHESTRATOR §23) a agent je nečte, jen používá
+- zamčená položka se **nikdy** neodepisuje trvale (část 1.5)
 
 | Vypadá jako | Ve skutečnosti |
 |---|---|
-| nula buildů | nikdo necommitoval — u malého týmu normální stav |
-| chybovost 100 % | jeden vývojář nahrál rozbitou větev a opakuje pokusy |
-| build trvá 3× déle | studená cache po úklidu, ne regrese |
-| „deploy prošel" | prošel do staging; produkce běží pořád starou verzi (§15) |
+| lavina `500` na detailech | skončené aukce — normální konec života |
+| propad v pondělí ráno | týdenní cyklus, u aukcí extrémní |
+| „přestali jsme sbírat" | vypršela session, sběr běží dál naprázdno (část 1.4) |
+| 40 % položek zamčeno | vyžadují přihlášení, ne poruchu |
 
-**Užitečný detail:** v CI je `NO_DATA` běžný a legitimní stav. Šablona ho proto
-odlišuje od `ANOMALY` — nula buildů v noci není porucha, ale nula buildů
-v úterý v deset dopoledne je.
+## 5.2 Bazary — inzerát se vrací pořád dokola
 
----
+Veřejná inzerce většinou nepotřebuje přihlášení, zato je plná duplicit: tentýž
+předmět inzerovaný pětkrát, přeposazený po týdnu znovu, s jiným ID.
 
-## 4. SaaS API
+Klíčové rozhodnutí je **klíč totožnosti**. Ne URL, ne ID zdroje — něco, co
+přežije přeposazení:
 
-**Výsledek:** obsloužený požadavek, který zákazníkovi vrátil užitečnou odpověď.
-Ne HTTP 200.
-
-```python
-SUBJECTS = ["api", "webhooky", "fronta"]
-BLOCK_HOURS = 1
-
-def fetch(subject, start, end):
-    if subject == "api":
-        m = metrics.range(f'sum by (status) (rate(http_requests_total[1m]))', start, end)
-        ok  = sum(v for s, v in m.items() if s.startswith("2"))
-        rej = sum(v for s, v in m.items() if s.startswith("4"))
-        err = sum(v for s, v in m.items() if s.startswith("5"))
-        return {"ok": round(ok), "rejected": round(rej), "error": round(err)}
-    ...
+```sql
+ALTER TABLE polozky ADD COLUMN otisk text
+  GENERATED ALWAYS AS (md5(lower(nazev) || cena || prodejce)) STORED;
+CREATE UNIQUE INDEX ON polozky (zdroj, otisk);
 ```
 
-**Pozor na past:** `2xx` samo o sobě není výsledek. Když endpoint vrátí `200`
-s prázdným polem, protože upstream mlčí, metrika je zelená a zákazník nemá nic.
-To je **měkké selhání** z tabulky v §19 a stojí za to ho měřit zvlášť — třeba
-podílem odpovědí s prázdným tělem.
+**Pozor na časově omezenou deduplikaci.** Když stejný inzerát zahodíte
+navždycky, přijdete o legitimní opakování. Když ho neodfiltrujete vůbec,
+zaplníte DB šumem. Správná odpověď je **změřená**: jaký podíl opakování po
+N dnech přinese nová data. Ne odhad.
+
+| Vypadá jako | Ve skutečnosti |
+|---|---|
+| skok o 300 % | jeden prodejce nahrál celý sklad |
+| nula nových položek | výpis narazil na strop stránkování (část 1.2) |
+| „duplicit je 60 %" | správně — bazar je jich plný, otázka je jen jak je poznat |
+| propad o víkendu | naopak vrchol; baseline musí být podle bloku denní doby |
+
+## 5.3 E-shopy — cena, která není číslo
+
+Katalog je nejstabilnější ze tří, ale má vlastní zradu: pole, které někdy není
+pole. `cena: null` u položky „na dotaz" je legitimní stav, ne chyba parsování —
+a když ji zahrnete do povinných polí (část 1.7), zahodíte platné záznamy.
 
 **Mantinely:**
 
-- rate limity a kvóty zákazníků se nemění bez souhlasu (§14 — je to limit
-  v produkci)
-- agent nikdy nemění autentizaci ani autorizaci
-- data jednoho tenanta se nikdy nečtou kvůli diagnostice jiného
-
-**Co si spletete za poruchu:**
+- ceny a dostupnost se **jen čtou**; agent nikdy nic neobjedná ani nevloží
+  do košíku
+- když e-shop nabízí feed (XML/CSV), používá se feed — je to jeho vlastní
+  a schválená cesta k týmž datům
 
 | Vypadá jako | Ve skutečnosti |
 |---|---|
-| nárůst 4xx | jeden zákazník nasadil rozbitého klienta |
-| propad provozu v pátek večer | denní i týdenní cyklus dohromady |
-| latence vzrostla 5× | jeden pomalý tenant, ne systém |
-| „API je dole" | health endpoint chodí, ale závislost mlčí (§19) |
+| „30 % položek bez ceny" | „cena na dotaz" — legitimní stav |
+| katalog se zmenšil o polovinu | sezónní stažení nabídky |
+| všechny ceny se změnily naráz | jiná měna nebo DPH v odpovědi, ne skutečná změna |
+| feed je prázdný | generuje se v noci; ráno je platný (ORCHESTRATOR §19) |
 
 ---
 
-## Co je společné
+# 6. Když se to rozbije: od symptomu ke kořeni
 
-Ať děláte cokoli, tyhle čtyři kroky jsou vždycky stejné:
+Modelový průběh podle ORCHESTRATOR §10, na nejčastějším případu — **přes noc přestaly
+přibývat úplné záznamy**:
 
-**1. Pojmenujte výsledek v jednotkách, které mají cenu.** Když se metrika nedá
-převést na peníze nebo aspoň na „tohle by zákazníka naštvalo", je to metrika
-stroje, ne výsledku.
+```
+symptom     outcome check: ok = 0 od 02:00, error = 0
+            (nula chyb je podezřelejší než tisíc chyb)
+   ↓
+mechanismus proces běží, požadavky odcházejí, odpovědi jsou 200,
+            ale v odpovědi je přihlašovací formulář (část 1.4)
+   ↓
+kořen       session vypršela ve 02:00 a nikdo to nedetekoval,
+            protože se měřil stavový kód místo obsahu
+   ↓
+oprava      session_zije() z části 1.4 + obnovení přihlášení při jeho selhání
+   ↓
+ověření     ok > 0 v následujícím okně, a záměrně vypršelá session
+            v testu vede k obnovení, ne k tichému nulovému sběru
+```
 
-**2. Změřte si vlastní práh.** Postup je v §8: 30 dní historie, okna stejné
-délky, poměr k mediánu stejného bloku denní doby, práh na percentilu.
-Nepřebírejte čísla z těchto příkladů — jsou ilustrativní.
-
-**3. Napište doménovou sémantiku (§7).** Které stavy jsou dočasné, které
-terminální, co je záměrný skip. Bez toho hlásí každý zdravý systém katastrofu.
-
-**4. Vyplňte `falsified_by` u každého zjištění.** Nejlevnější obrana proti
-falešnému poplachu je otázka „co by tenhle závěr vyvrátilo" položená dřív,
-než se poplach dostane k člověku.
+Všimněte si, že oprava nesměřuje na sběr, ale **na měření**. To je typické:
+kdyby check od začátku hlídal obsah, incident by trval minuty, ne noc.
 
 ---
 
-## Jak si ověřit, že je to nastavené správně
+# 7. Jak si ověřit, že je to nastavené správně
 
 ```bash
 python3 checks/outcome.py            # projde? vrací čísla, ne prázdno?
@@ -206,12 +345,34 @@ python3 checks/outcome.py --quiet    # jeden řádek — tohle uvidí cron
 ./triage.sh --brief                  # co dostane model, když je co řešit
 ```
 
-Dva testy, které odhalí většinu chyb v nastavení:
+Tři testy, které odhalí většinu chyb v nastavení:
 
-**Test slepého měřidla.** Dočasně nasměrujte `fetch()` na okno, o kterém víte,
-že v něm systém pracoval. Když vrátí nulu, měříte špatnou věc — a to je horší
-než neměřit nic (§3).
+**Test slepého měřidla.** Nasměrujte `fetch()` na okno, o kterém víte, že
+v něm sběr pracoval. Když vrátí nulu, měříte špatnou věc — a to je horší
+než neměřit nic (ORCHESTRATOR §3).
 
 **Test falešného poplachu.** Pusťte check proti třiceti dnům historie
-a spočítejte, kolik dnů by označil za `ANOMALY`. Když jich je víc než pár
-procent, máte moc přísný práh a agent bude chodit budit člověka pro nic.
+a spočítejte, kolik oken by označil za `ANOMALY`. Když jich je víc než pár
+procent, je práh moc přísný a agent bude budit člověka pro nic.
+
+**Test vypršelé session.** Smažte cookie jar a nechte proběhnout jeden cyklus.
+Správný výsledek je hlášená porucha do minuty. Když check zůstane zelený,
+neměříte výsledek — měříte, že program běží.
+
+---
+
+# Co si z toho odnést
+
+**Průzkum je součást úlohy, ne příprava na ni.** Sedm otázek z části 1 se zodpoví
+jednou a ušetří většinu pozdějších incidentů — protože skoro každý falešný
+poplach je jedna z nich nezodpovězená.
+
+**Výsledek se počítá v datech, která zůstala.** Ne ve stránkách, ne v požadavcích,
+ne v návratových kódech.
+
+**Prahy si změřte.** Čísla v tomhle souboru jsou ilustrativní a v jiném provozu
+budou jinak.
+
+**`falsified_by` u každého zjištění.** Nejlevnější obrana proti falešnému
+poplachu je otázka „co by tenhle závěr vyvrátilo" položená dřív, než se poplach
+dostane k člověku.

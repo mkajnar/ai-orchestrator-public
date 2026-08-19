@@ -3,8 +3,8 @@
 Jeden živý agent, který v pravidelném cyklu měří výsledek tvého systému.
 Když je co řešit, řeší to. Když ne, mlčí a spí — a to je většina cyklů.
 
-Použitelné na cokoli s měřitelným výsledkem: e-shop, SaaS, ETL, CI/CD,
-mikroslužby, dávkové zpracování. Konkrétní nasazení ukazuje **[EXAMPLES.md](EXAMPLES.md)**.
+Použitelné na cokoli s měřitelným výsledkem: sběr dat z cizích webů, e-shop,
+SaaS, ETL, CI/CD, mikroslužby, dávkové zpracování. Konkrétní nasazení ukazuje **[EXAMPLES.md](EXAMPLES.md)**.
 
 ## Proč vzniklo
 
@@ -80,7 +80,7 @@ Začni v `DIAGNOSE`. `AUTOFIX` zapni, až uvidíš na pár incidentech, že diag
 | `AGENT-LOOP.md` | tělo smyčky — co agent dělá v každém cyklu |
 | `ORCHESTRATOR.md` | kontrakt: mantinely, prahy, rollback, autonomie |
 | `CLAUDE.md` | boot instrukce, které přežijí vyčištění kontextu |
-| `EXAMPLES.md` | čtyři domény od e-shopu po CI/CD |
+| `EXAMPLES.md` | úloha od průzkumu cizího webu po evidenci v DB |
 | `skills/ultrathink-engineer.md` | inženýrská disciplína, kterou agent čte před zásahem do kódu |
 | `triage.sh` | brána — hlásí jen to, co existuje |
 | `suppress.sh` | vyřízený nález nevolá model znovu |
@@ -152,7 +152,7 @@ agregační checky na druhé.
    data, cesty nasazení
 
 Prahy nikdy nepřebírej odjinud. Postup, jak je odvodit z vlastní historie, je
-v `ORCHESTRATOR.md` §8; hotové příklady pro čtyři domény v `EXAMPLES.md`.
+v `ORCHESTRATOR.md` §8; rozepsané na konkrétní úloze v `EXAMPLES.md`.
 
 ## Licence
 
