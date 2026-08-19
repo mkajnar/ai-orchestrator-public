@@ -21,8 +21,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -r "$ROOT/config.sh" ] && . "$ROOT/config.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOCK="${ORCH_SOCK:-/tmp/orchestrator.sock}"
-SESSION="${ORCH_SESSION:-orchestrator}"
+SOCK="${SOCK:-${ORCH_SOCK:-/tmp/orchestrator.sock}}"
+SESSION="${SESSION:-${ORCH_SESSION:-orchestrator}}"
 T="tmux -S $SOCK"
 
 [ -f "$ROOT/state/STOP" ] && exit 0

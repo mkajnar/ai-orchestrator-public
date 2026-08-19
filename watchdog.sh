@@ -20,8 +20,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -r "$ROOT/config.sh" ] && . "$ROOT/config.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SESSION="${ORCH_SESSION:-orchestrator}"
-SOCK="${ORCH_SOCK:-/tmp/orchestrator.sock}"
+SESSION="${SESSION:-${ORCH_SESSION:-orchestrator}}"
+SOCK="${SOCK:-${ORCH_SOCK:-/tmp/orchestrator.sock}}"
 LOCK="${ORCH_LOCK:-$ROOT/state/start.lock}"
 NTFY_TOPIC="${NTFY_TOPIC:-}"
 LOG="$ROOT/state/watchdog.log"
@@ -35,7 +35,9 @@ notify(){ curl -s --max-time 10 -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
 # Claude procesy agenta = ty, které mají v příkazové řádce jeho pracovní adresář.
 # Podle jména procesu to nejde — vlastník má claude i jinde a ten se nesmí zabít.
 agent_pids(){
-  pgrep -u ubuntu -f -- "--mcp-config $ROOT/mcp-servers.json" 2>/dev/null || true
+  pgrep -u "${AGENT_USER:-ubuntu}" -x claude 2>/dev/null | while read -r p; do
+    [ "$(readlink -f "/proc/$p/cwd" 2>/dev/null)" = "$ROOT" ] && echo "$p"
+  done
 }
 
 status(){

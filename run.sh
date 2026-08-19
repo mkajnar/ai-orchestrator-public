@@ -17,8 +17,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -r "$ROOT/config.sh" ] && . "$ROOT/config.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SESSION=orchestrator
-SOCK=/tmp/orchestrator.sock
+# Pozor: až PO načtení config.sh a s ${VAR:-} — přiřazení natvrdo by
+# konfiguraci zahodilo a dvě nasazení na jednom stroji by si sáhla na
+# tentýž socket, takže start jednoho by zabil druhé.
+SESSION="${SESSION:-orchestrator}"
+SOCK="${SOCK:-/tmp/orchestrator.sock}"
 LOCK="$ROOT/state/start.lock"
 RUN_AS="${AGENT_USER:-$(id -un)}"
 CLAUDE="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
@@ -32,7 +35,13 @@ if [ "$(id -u)" = 0 ]; then
   exec sudo -u "$RUN_AS" -H env ORCH_FROM_ROOT=1 "$0" "$@"
 fi
 
-pids(){ pgrep -u "$RUN_AS" -f -- "--mcp-config $ROOT/mcp-servers.json" 2>/dev/null || true; }
+# Podle pracovního adresáře procesu, ne podle argumentů: MCP konfigurace je
+# volitelná, takže se v příkazové řádce nemusí objevit vůbec.
+pids(){
+  pgrep -u "$RUN_AS" -x claude 2>/dev/null | while read -r p; do
+    [ "$(readlink -f "/proc/$p/cwd" 2>/dev/null)" = "$ROOT" ] && echo "$p"
+  done
+}
 
 if [ "${1:-}" = "--status" ]; then
   "${T[@]}" has-session -t "$SESSION" 2>/dev/null && s=ANO || s=NE
