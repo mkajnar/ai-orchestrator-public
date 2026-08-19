@@ -1,0 +1,25 @@
+# Runtime stav — patří na disk, ne do gitu.
+config.sh
+state/*.log
+state/*.lock
+state/*.json
+state/incidents/*.yaml
+state/STOP
+state/WAKE
+state/AUTOFIX
+
+# Audit běhů může nést produkční data i osobní údaje ze zdroje.
+runs/**
+!runs/.keep
+
+*.tgz
+*.tar.gz
+*.dump
+*.sqlite
+*.db
+.env
+*.token
+.git-credentials*
+__pycache__/
+*.pyc
+.hitl/

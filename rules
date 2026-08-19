@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# rules — vytáhne z kontraktu jen tu sekci, která je zrovna potřeba.
+#
+# ORCHESTRATOR.md má ~15 000 tokenů. Načíst ho celý kvůli jednomu pravidlu
+# stojí víc než celý zbytek ticku dohromady. Brief z triage.sh proto odkazuje
+# na čísla sekcí a tenhle skript je vydá jednotlivě.
+#
+#   ./rules 14        jedna sekce
+#   ./rules 10 11 16  několik naráz
+#   ./rules deploy    hledání podle slova v nadpisu
+#   ./rules --list    obsah s velikostí v tokenech
+set -uo pipefail
+
+# Konfigurace provozu — viz config.sh (zkopíruj z config.example.sh).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -r "$ROOT/config.sh" ] && . "$ROOT/config.sh"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOC="$ROOT/ORCHESTRATOR.md"
+[ -r "$DOC" ] || { echo "chybí $DOC" >&2; exit 66; }
+
+if [ $# -eq 0 ] || [ "${1:-}" = "--list" ]; then
+  awk '/^## /{ if (n) printf "  §%-4s %-52s ~%d tok\n", num, title, len/3;
+               match($0, /^## ([0-9]+)\. (.*)$/, m); num=m[1]; title=m[2]; len=0; n=1; next }
+       n { len += length($0)+1 }
+       END { if (n) printf "  §%-4s %-52s ~%d tok\n", num, title, len/3 }' "$DOC"
+  tot=$(wc -c < "$DOC")
+  printf "\n  celý dokument %41s ~%d tok\n" "" "$((tot/3))"
+  exit 0
+fi
+
+for arg in "$@"; do
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    awk -v s="$arg" '
+      $0 ~ "^## " s "\\." { p=1 }
+      p && /^## / && $0 !~ "^## " s "\\." && seen { exit }
+      p { print; seen=1 }' "$DOC"
+  else
+    sec=$(grep -inE "^## [0-9]+\. .*${arg}" "$DOC" | head -1 | sed -E 's/^[0-9]+:## ([0-9]+)\..*/\1/')
+    if [ -z "$sec" ]; then
+      echo "nenalezeno: $arg   (zkus ./rules --list)" >&2
+      continue
+    fi
+    "$0" "$sec"
+  fi
+  echo
+done
