@@ -7,8 +7,10 @@
 # ── kde to běží ──────────────────────────────────────────────────────────────
 AGENT_USER="${AGENT_USER:-$(id -un)}"      # uživatel, pod kterým běží agent
 AGENT_MODEL="${AGENT_MODEL:-opus}"
-SESSION="${SESSION:-orchestrator}"
-SOCK="${SOCK:-/tmp/orchestrator.sock}"
+# SESSION a SOCK se odvozují od názvu adresáře nasazení, takže se dvě kopie
+# na jednom stroji nesrazí. Odkomentuj jen když potřebuješ jiné jméno.
+# SESSION="muj-agent"
+# SOCK="/tmp/muj-agent.sock"
 CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
 
 # ── jak často ────────────────────────────────────────────────────────────────

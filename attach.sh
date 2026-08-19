@@ -19,8 +19,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -r "$ROOT/config.sh" ] && . "$ROOT/config.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOCK="${SOCK:-${ORCH_SOCK:-/tmp/orchestrator.sock}}"
-SESSION="${SESSION:-${ORCH_SESSION:-orchestrator}}"
+SOCK="${SOCK:-${ORCH_SOCK:-/tmp/$(basename "$ROOT").sock}}"
+SESSION="${SESSION:-${ORCH_SESSION:-$(basename "$ROOT")}}"
 T=(tmux -S "$SOCK")
 
 if ! "${T[@]}" has-session -t "$SESSION" 2>/dev/null; then

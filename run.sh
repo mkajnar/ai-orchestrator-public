@@ -20,8 +20,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Pozor: až PO načtení config.sh a s ${VAR:-} — přiřazení natvrdo by
 # konfiguraci zahodilo a dvě nasazení na jednom stroji by si sáhla na
 # tentýž socket, takže start jednoho by zabil druhé.
-SESSION="${SESSION:-orchestrator}"
-SOCK="${SOCK:-/tmp/orchestrator.sock}"
+SESSION="${SESSION:-$(basename "$ROOT")}"
+SOCK="${SOCK:-/tmp/$(basename "$ROOT").sock}"
 LOCK="$ROOT/state/start.lock"
 RUN_AS="${AGENT_USER:-$(id -un)}"
 CLAUDE="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
@@ -31,8 +31,15 @@ T=(tmux -S "$SOCK")
 INSTRUKCE='Přečti AGENT-LOOP.md a pracuj přesně podle něj. Piš výhradně česky. Na konci každého cyklu spusť ./next-cycle.sh & — bez toho se smyčka zastaví. Čisté cykly nekomentuj.'
 
 # Pod rootem se přepni: claude odmítá --dangerously-skip-permissions pod rootem.
+# RUN_AS=root by ale znamenal sudo sám na sebe donekonečna. 19. 8. to shodilo
+# stroj: 12 786 iterací za 28 minut, každá zanechá živý pár sudo+bash, došla paměť.
 if [ "$(id -u)" = 0 ]; then
-  exec sudo -u "$RUN_AS" -H env ORCH_FROM_ROOT=1 "$0" "$@"
+  if [ "$RUN_AS" = root ]; then
+    echo "CHYBA: skript běží pod rootem a AGENT_USER není nastaven." >&2
+    echo "   nastav v config.sh:  AGENT_USER=<neroot uživatel>" >&2
+    exit 78
+  fi
+  exec sudo -u "$RUN_AS" -H "$0" "$@"
 fi
 
 # Podle pracovního adresáře procesu, ne podle argumentů: MCP konfigurace je
